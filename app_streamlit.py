@@ -14,7 +14,7 @@ import joblib
 import os
 import plotly.graph_objects as go
 
-from utils import safe_encode as _safe_encode, build_prediction_row
+from utils import parse_udzial, safe_encode as _safe_encode, build_prediction_row
 
 st.set_page_config(page_title="Estymacja cen nieruchomości", page_icon="🏙️", layout="wide")
 
@@ -241,10 +241,7 @@ with tab1:
 
     if predict_btn:
         # ── Przygotowanie wartości ──
-        try:
-            udzial_float = eval(udzial_str)
-        except Exception:
-            udzial_float = 1.0
+        udzial_float = parse_udzial(udzial_str)
 
         teryt = TERYT_OPTIONS[teryt_label]
         pow_uzyt_val = bud_pow_uzyt if bud_pow_uzyt > 0 else 65.0
