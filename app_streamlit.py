@@ -12,6 +12,7 @@ import pandas as pd
 import numpy as np
 import joblib
 import os
+import html
 import plotly.graph_objects as go
 
 from utils import safe_encode as _safe_encode, build_prediction_row
@@ -242,8 +243,9 @@ with tab1:
     if predict_btn:
         # ── Przygotowanie wartości ──
         try:
-            udzial_float = eval(udzial_str)
-        except Exception:
+            parts = udzial_str.split("/")
+            udzial_float = float(parts[0]) / float(parts[1])
+        except (ValueError, ZeroDivisionError, IndexError):
             udzial_float = 1.0
 
         teryt = TERYT_OPTIONS[teryt_label]
@@ -358,7 +360,7 @@ with tab1:
             }
             for k, v in items.items():
                 st.markdown(
-                    f'<div class="info-box"><b style="color:#e8ecf3">{k}:</b> {v}</div>',
+                    f'<div class="info-box"><b style="color:#e8ecf3">{html.escape(str(k))}:</b> {html.escape(str(v))}</div>',
                     unsafe_allow_html=True
                 )
 
