@@ -5,10 +5,13 @@ Extracted from analiza_nieruchomosci.py and app_streamlit.py
 to enable unit testing and reuse.
 """
 
+import logging
 import re
 
 import numpy as np
 import pandas as pd
+
+log = logging.getLogger(__name__)
 
 
 def extract_miasto(adres):
@@ -38,12 +41,19 @@ def parse_udzial(val):
     if "/" in val:
         try:
             parts = val.split("/")
-            return float(parts[0]) / float(parts[1])
-        except Exception:
+            numerator = float(parts[0])
+            denominator = float(parts[1])
+            if denominator == 0:
+                log.warning("Division by zero in share '%s', defaulting to 1.0", val)
+                return 1.0
+            return numerator / denominator
+        except (ValueError, IndexError) as exc:
+            log.warning("Failed to parse share '%s': %s", val, exc)
             return 1.0
     try:
         return float(val)
-    except Exception:
+    except ValueError as exc:
+        log.warning("Failed to convert share '%s' to float: %s", val, exc)
         return 1.0
 
 
@@ -63,13 +73,22 @@ def safe_encode(col, val, encoders):
         Mapping of column names to fitted ``LabelEncoder`` instances.
     """
     if col not in encoders:
+        log.warning("Encoder for column '%s' not found, returning 0", col)
         return 0
     le = encoders[col]
     if val in le.classes_:
         return int(le.transform([val])[0])
     for fallback in ["nieznany", "NIEZNANY", "INNE"]:
         if fallback in le.classes_:
+            log.warning(
+                "Value '%s' unknown in encoder '%s', using fallback '%s'",
+                val, col, fallback,
+            )
             return int(le.transform([fallback])[0])
+    log.warning(
+        "Value '%s' unknown in encoder '%s' and no fallbacks available, returning 0",
+        val, col,
+    )
     return 0
 
 

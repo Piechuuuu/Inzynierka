@@ -7,12 +7,17 @@ Uruchomienie:
     streamlit run app_streamlit.py
 """
 
-import streamlit as st
-import pandas as pd
-import numpy as np
-import joblib
+import logging
 import os
+from fractions import Fraction
+
+import joblib
+import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
+import streamlit as st
+
+log = logging.getLogger(__name__)
 
 from utils import safe_encode as _safe_encode, build_prediction_row
 
@@ -51,24 +56,47 @@ hr{border-color:var(--border)!important;}
 
 WYNIKI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wyniki")
 
+REQUIRED_ARTIFACTS = [
+    "model_najlepszy.pkl",
+    "encoders.pkl",
+    "metryki.pkl",
+    "target_encodings.pkl",
+]
+
+missing = [f for f in REQUIRED_ARTIFACTS if not os.path.isfile(os.path.join(WYNIKI_DIR, f))]
+if missing:
+    st.error(
+        f"Brakuje wymaganych plikow: {', '.join(missing)}. "
+        "Uruchom najpierw `analiza_nieruchomosci.py`."
+    )
+    st.stop()
+
+
 @st.cache_resource
 def load_artifacts():
-    model    = joblib.load(os.path.join(WYNIKI_DIR, "model_najlepszy.pkl"))
-    encoders = joblib.load(os.path.join(WYNIKI_DIR, "encoders.pkl"))
-    metryki  = joblib.load(os.path.join(WYNIKI_DIR, "metryki.pkl"))
-    te       = joblib.load(os.path.join(WYNIKI_DIR, "target_encodings.pkl"))
+    try:
+        model    = joblib.load(os.path.join(WYNIKI_DIR, "model_najlepszy.pkl"))
+        encoders = joblib.load(os.path.join(WYNIKI_DIR, "encoders.pkl"))
+        metryki  = joblib.load(os.path.join(WYNIKI_DIR, "metryki.pkl"))
+        te       = joblib.load(os.path.join(WYNIKI_DIR, "target_encodings.pkl"))
+    except Exception as exc:
+        log.error("Blad wczytywania artefaktow modelu: %s", exc)
+        st.error(f"Nie udalo sie wczytac artefaktow modelu: {exc}")
+        st.stop()
     return model, encoders, metryki, te
+
 
 @st.cache_data
 def load_stats():
-    city   = pd.read_csv(os.path.join(WYNIKI_DIR, "city_stats.csv"))
-    yearly = pd.read_csv(os.path.join(WYNIKI_DIR, "yearly_prices.csv"))
-    fi     = pd.read_csv(os.path.join(WYNIKI_DIR, "feature_importance.csv"), names=["cecha","waga"], header=0)
+    try:
+        city   = pd.read_csv(os.path.join(WYNIKI_DIR, "city_stats.csv"))
+        yearly = pd.read_csv(os.path.join(WYNIKI_DIR, "yearly_prices.csv"))
+        fi     = pd.read_csv(os.path.join(WYNIKI_DIR, "feature_importance.csv"), names=["cecha","waga"], header=0)
+    except (FileNotFoundError, pd.errors.ParserError, pd.errors.EmptyDataError) as exc:
+        log.error("Blad wczytywania statystyk CSV: %s", exc)
+        st.error(f"Nie udalo sie wczytac pliku statystyk: {exc}")
+        st.stop()
     return city, yearly, fi
-
-if not os.path.exists(os.path.join(WYNIKI_DIR, "model_najlepszy.pkl")):
-    st.error("⚠️ Nie znaleziono modelu. Uruchom najpierw `analiza_nieruchomosci.py`.")
-    st.stop()
 
 model, encoders, metryki, te = load_artifacts()
 city_stats, yearly_prices, feat_imp = load_stats()
@@ -242,8 +270,9 @@ with tab1:
     if predict_btn:
         # ── Przygotowanie wartości ──
         try:
-            udzial_float = eval(udzial_str)
-        except Exception:
+            udzial_float = float(Fraction(udzial_str))
+        except (ValueError, ZeroDivisionError) as exc:
+            log.warning("Nie udalo sie sparsowac udzialu '%s': %s", udzial_str, exc)
             udzial_float = 1.0
 
         teryt = TERYT_OPTIONS[teryt_label]
@@ -288,7 +317,17 @@ with tab1:
         )
 
         # ── Predykcja ──
-        pred      = float(model.predict(row)[0])
+        try:
+            pred = float(model.predict(row)[0])
+        except Exception as exc:
+            log.error("Blad predykcji modelu: %s", exc)
+            st.error(f"Blad predykcji modelu: {exc}")
+            st.stop()
+
+        if pred < 0:
+            log.warning("Model zwrocil ujemna cene (%.2f), ustawiam na 0", pred)
+            pred = 0.0
+
         pred_low  = pred * 0.85
         pred_high = pred * 1.15
         cena_m2   = pred / pow_uzyt_val if pow_uzyt_val > 0 else None
@@ -562,14 +601,26 @@ with tab3:
     st.plotly_chart(fig_fi, use_container_width=True)
 
     with st.expander("ℹ️ O danych i metodologii"):
+        algo_lines = []
+        for algo_name, algo_label in [
+            ("Regresja liniowa", "Regresja liniowa (baseline)"),
+            ("Random Forest", "Random Forest (400 drzew)"),
+            ("XGBoost", "XGBoost (600 estymatorów)"),
+        ]:
+            if algo_name in metryki:
+                algo_lines.append(
+                    f"- {algo_label} — R²={metryki[algo_name]['R2']:.4f}"
+                )
+            else:
+                algo_lines.append(f"- {algo_label} — niedostępny")
+        algo_text = "\n".join(algo_lines)
+
         st.markdown(f"""
 **Źródło:** Rejestr Cen i Wartości Nieruchomości (RCiWN) · Kujawsko-Pomorskie  
 **Zakres:** styczeń 2020 – grudzień 2025 · 205 425 transakcji (po filtrowaniu Q1–Q95)
 
 **Algorytmy:**
-- Regresja liniowa (baseline) — R²={metryki['Regresja liniowa']['R2']:.4f}
-- Random Forest (400 drzew) — R²={metryki['Random Forest']['R2']:.4f}
-- XGBoost (600 estymatorów) — R²={metryki['XGBoost']['R2']:.4f}
+{algo_text}
 
 **Cechy ({len(FEATURES)}):** {', '.join(FEATURES)}  
 **Podział:** 80% trening / 20% test (random_state=42)
