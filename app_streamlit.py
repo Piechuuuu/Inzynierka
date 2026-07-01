@@ -14,6 +14,8 @@ import joblib
 import os
 import plotly.graph_objects as go
 
+from utils import safe_encode as _safe_encode, build_prediction_row
+
 st.set_page_config(page_title="Estymacja cen nieruchomości", page_icon="🏙️", layout="wide")
 
 st.markdown("""
@@ -257,21 +259,6 @@ with tab1:
         ma_nier_cena_val = int(nier_cena_brutto_input > 0)
 
         # ── Enkodowanie kategorii ──
-        def safe_encode(col, val):
-            """Zamienia wartość kategoryczną na kod liczbowy.
-            Jeśli wartość nie istnieje w klasach danego encodera,
-            próbuje kolejnych fallbacków zamiast rzucać KeyError."""
-            if col not in encoders:
-                return 0
-            le = encoders[col]
-            if val in le.classes_:
-                return int(le.transform([val])[0])
-            # Fallbacki w kolejności preferencji
-            for fallback in ["nieznany", "NIEZNANY", "INNE"]:
-                if fallback in le.classes_:
-                    return int(le.transform([fallback])[0])
-            return 0  # absolutny fallback
-
         cat_inputs = {
             "bud_rodzaj":        bud_rodzaj,
             "tran_rodzaj_rynku": tran_rodzaj_rynku,
@@ -282,30 +269,23 @@ with tab1:
             "nier_prawo":        nier_prawo,
             "miasto":            miasto_wybor,
         }
-        encoded = {col: safe_encode(col, val) for col, val in cat_inputs.items()}
+        encoded = {col: _safe_encode(col, val, encoders) for col, val in cat_inputs.items()}
 
         # ── Budowa wiersza wejściowego (kolejność = FEATURES z metryki.pkl) ──
-        row = pd.DataFrame([{
-            "bud_rodzaj":        encoded["bud_rodzaj"],
-            "tran_rodzaj_rynku": encoded["tran_rodzaj_rynku"],
-            "tran_rodzaj_trans": encoded["tran_rodzaj_trans"],
-            "tran_sprzedajacy":  encoded["tran_sprzedajacy"],
-            "tran_kupujacy":     encoded["tran_kupujacy"],
-            "nier_rodzaj":       encoded["nier_rodzaj"],
-            "nier_prawo":        encoded["nier_prawo"],
-            "miasto":            encoded["miasto"],
-            "bud_pow_uzyt":      pow_uzyt_val,
-            "nier_pow_gruntu":   nier_pow_gruntu,
-            "udzial_float":      udzial_float,
-            "teryt":             teryt,
-            "rok":               rok,
-            "miesiac":           miesiac,
-            "ma_pow_uzyt":       int(bud_pow_uzyt > 0),
-            "miasto_med":        miasto_med_val,
-            "teryt_med":         teryt_med_val,
-            "nier_cena_brutto":  nier_cena_val,
-            "ma_nier_cena":      ma_nier_cena_val,
-        }])[FEATURES]  # gwarantuje kolejność kolumn zgodną z modelem
+        row = build_prediction_row(
+            encoded_cats=encoded,
+            bud_pow_uzyt=pow_uzyt_val,
+            nier_pow_gruntu=nier_pow_gruntu,
+            udzial_float=udzial_float,
+            teryt=teryt,
+            rok=rok,
+            miesiac=miesiac,
+            miasto_med_val=miasto_med_val,
+            teryt_med_val=teryt_med_val,
+            nier_cena_val=nier_cena_val,
+            ma_nier_cena_val=ma_nier_cena_val,
+            features_order=FEATURES,
+        )
 
         # ── Predykcja ──
         pred      = float(model.predict(row)[0])

@@ -23,6 +23,7 @@ import joblib
 import os
 import re
 
+from utils import extract_miasto, parse_udzial
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
@@ -132,17 +133,6 @@ print("=" * 60)
 df2 = df.copy()
 
 # ── 3a. Miasto z bud_adres (format "MSC:NazwaMiasta;...") ──
-def extract_miasto(adres):
-    """Wyciąga pierwszą nazwę miejscowości z pola bud_adres."""
-    if pd.isna(adres):
-        return "NIEZNANY"
-    # Bierze pierwszy segment przed '|', potem szuka 'MSC:'
-    segment = str(adres).split("|")[0]
-    match = re.search(r"MSC:([^;|]+)", segment)
-    if match:
-        return match.group(1).strip().upper()
-    return "NIEZNANY"
-
 df2["miasto"] = df2["bud_adres"].apply(extract_miasto)
 print(f"Unikalne miasta: {df2['miasto'].nunique()}")
 print("Top 15 miast:")
@@ -157,22 +147,6 @@ print(f"\nRozkład lat transakcji:")
 print(df2["rok"].value_counts().sort_index())
 
 # ── 3c. Udział własności jako float ──
-def parse_udzial(val):
-    """Zamienia '1/2' → 0.5, '1/1' → 1.0 itp."""
-    if pd.isna(val):
-        return 1.0
-    val = str(val).strip()
-    if "/" in val:
-        try:
-            parts = val.split("/")
-            return float(parts[0]) / float(parts[1])
-        except Exception:
-            return 1.0
-    try:
-        return float(val)
-    except Exception:
-        return 1.0
-
 df2["udzial_float"] = df2["nier_udzial"].apply(parse_udzial)
 # Przytnij do sensownego zakresu
 df2["udzial_float"] = df2["udzial_float"].clip(0.001, 1.0)
