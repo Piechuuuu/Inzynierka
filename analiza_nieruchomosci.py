@@ -14,30 +14,40 @@ Wymagane biblioteki:
   pip install pandas numpy matplotlib seaborn scikit-learn xgboost joblib
 """
 
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-import warnings
-import joblib
+import logging
 import os
-import re
+import sys
+import warnings
+
+import joblib
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
 
 from utils import extract_miasto, parse_udzial
-from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LinearRegression
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.preprocessing import LabelEncoder
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+log = logging.getLogger(__name__)
 
 try:
     from xgboost import XGBRegressor
     XGBOOST_AVAILABLE = True
 except ImportError:
-    print("Uwaga: xgboost nie jest zainstalowany. Zainstaluj: pip install xgboost")
+    log.warning("xgboost nie jest zainstalowany. Zainstaluj: pip install xgboost")
     XGBOOST_AVAILABLE = False
 
-warnings.filterwarnings("ignore")
+# Suppress only non-critical convergence / future-deprecation noise
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 sns.set_theme(style="whitegrid")
 
 DATA_PATH   = "transakcje_budynki.csv"
@@ -51,7 +61,15 @@ print("=" * 60)
 print("1. WCZYTANIE DANYCH")
 print("=" * 60)
 
-df = pd.read_csv(DATA_PATH, low_memory=False)
+if not os.path.isfile(DATA_PATH):
+    log.error("Nie znaleziono pliku danych: %s", DATA_PATH)
+    sys.exit(1)
+
+try:
+    df = pd.read_csv(DATA_PATH, low_memory=False)
+except (pd.errors.ParserError, pd.errors.EmptyDataError) as exc:
+    log.error("Nie udało się wczytać pliku CSV '%s': %s", DATA_PATH, exc)
+    sys.exit(1)
 print(f"Rozmiar zbioru: {df.shape[0]:,} wierszy, {df.shape[1]} kolumn")
 print("\nKolumny:")
 print(df.dtypes)
@@ -140,10 +158,14 @@ print(df2["miasto"].value_counts().head(15))
 
 # ── 3b. Rok i miesiąc z dok_data ──
 df2["dok_data_dt"] = pd.to_datetime(df2["dok_data"], errors="coerce", utc=True)
+coerced_dates = df2["dok_data_dt"].isna() & df2["dok_data"].notna()
+if coerced_dates.any():
+    n_bad = int(coerced_dates.sum())
+    log.warning("%d wierszy miało nieparsowalne daty (zamienione na NaT)", n_bad)
 df2["rok"]         = df2["dok_data_dt"].dt.year
 df2["miesiac"]     = df2["dok_data_dt"].dt.month
 
-print(f"\nRozkład lat transakcji:")
+print("\nRozkład lat transakcji:")
 print(df2["rok"].value_counts().sort_index())
 
 # ── 3c. Udział własności jako float ──
