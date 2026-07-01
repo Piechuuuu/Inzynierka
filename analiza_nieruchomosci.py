@@ -21,14 +21,20 @@ import seaborn as sns
 import warnings
 import joblib
 import os
-import re
 
-from utils import extract_miasto, parse_udzial
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import LabelEncoder
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+
+from utils import (
+    extract_miasto,
+    filter_by_percentile,
+    parse_udzial,
+    print_section_header,
+    save_plot,
+    train_and_evaluate,
+)
 
 try:
     from xgboost import XGBRegressor
@@ -47,9 +53,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # ─────────────────────────────────────────────
 # 1. WCZYTANIE DANYCH
 # ─────────────────────────────────────────────
-print("=" * 60)
-print("1. WCZYTANIE DANYCH")
-print("=" * 60)
+print_section_header(1, "WCZYTANIE DANYCH")
 
 df = pd.read_csv(DATA_PATH, low_memory=False)
 print(f"Rozmiar zbioru: {df.shape[0]:,} wierszy, {df.shape[1]} kolumn")
@@ -59,9 +63,7 @@ print(df.dtypes)
 # ─────────────────────────────────────────────
 # 2. EDA – EKSPLORACYJNA ANALIZA DANYCH
 # ─────────────────────────────────────────────
-print("\n" + "=" * 60)
-print("2. EDA")
-print("=" * 60)
+print_section_header(2, "EDA")
 
 missing     = df.isnull().sum().sort_values(ascending=False)
 missing_pct = (missing / len(df) * 100).round(1)
@@ -95,10 +97,7 @@ axes[1].set_title("Cena wg rodzaju budynku (5 najczęstszych)")
 axes[1].set_xlabel("")
 axes[1].set_ylabel("Cena brutto [PLN]")
 plt.suptitle("")
-plt.tight_layout()
-plt.savefig(f"{OUTPUT_DIR}/eda_ceny.png", dpi=150)
-plt.close()
-print(f"\nZapisano: {OUTPUT_DIR}/eda_ceny.png")
+save_plot(OUTPUT_DIR, "eda_ceny.png")
 
 fig, ax = plt.subplots(figsize=(7, 5))
 df_rynek = df.dropna(subset=["tran_cena_brutto", "tran_rodzaj_rynku"])
@@ -108,27 +107,19 @@ ax.set_title("Cena wg rodzaju rynku")
 ax.set_xlabel("")
 ax.set_ylabel("Cena brutto [PLN]")
 plt.suptitle("")
-plt.tight_layout()
-plt.savefig(f"{OUTPUT_DIR}/eda_rynek.png", dpi=150)
-plt.close()
-print(f"Zapisano: {OUTPUT_DIR}/eda_rynek.png")
+save_plot(OUTPUT_DIR, "eda_rynek.png")
 
 num_cols = ["tran_cena_brutto", "nier_pow_gruntu", "bud_pow_uzyt", "nier_cena_brutto"]
 corr = df[num_cols].dropna().corr()
 fig, ax = plt.subplots(figsize=(7, 5))
 sns.heatmap(corr, annot=True, fmt=".2f", cmap="coolwarm", ax=ax)
 ax.set_title("Macierz korelacji cech numerycznych")
-plt.tight_layout()
-plt.savefig(f"{OUTPUT_DIR}/eda_korelacja.png", dpi=150)
-plt.close()
-print(f"Zapisano: {OUTPUT_DIR}/eda_korelacja.png")
+save_plot(OUTPUT_DIR, "eda_korelacja.png")
 
 # ─────────────────────────────────────────────
 # 3. FEATURE ENGINEERING
 # ─────────────────────────────────────────────
-print("\n" + "=" * 60)
-print("3. FEATURE ENGINEERING")
-print("=" * 60)
+print_section_header(3, "FEATURE ENGINEERING")
 
 df2 = df.copy()
 
@@ -158,9 +149,7 @@ print(f"\nRekordy po filtrze dat 2020–2025: {len(df2):,}")
 # ─────────────────────────────────────────────
 # 4. CZYSZCZENIE I PRZYGOTOWANIE DO MODELOWANIA
 # ─────────────────────────────────────────────
-print("\n" + "=" * 60)
-print("4. PRZYGOTOWANIE DANYCH DO MODELOWANIA")
-print("=" * 60)
+print_section_header(4, "PRZYGOTOWANIE DANYCH DO MODELOWANIA")
 
 TARGET = "tran_cena_brutto"
 
@@ -178,9 +167,7 @@ df_model = df2[RAW_COLS].copy()
 df_model = df_model.dropna(subset=[TARGET])
 
 # Filtruj nieprawdopodobne ceny (percentyle 1–95)
-q01 = df_model[TARGET].quantile(0.01)
-q95 = df_model[TARGET].quantile(0.95)
-df_model = df_model[(df_model[TARGET] >= q01) & (df_model[TARGET] <= q95)]
+df_model = filter_by_percentile(df_model, TARGET, lower=0.01, upper=0.95)
 print(f"Rekordy po filtrowaniu cen (Q1–Q95): {len(df_model):,}")
 
 # Uzupełnij braki numeryczne medianą
@@ -231,9 +218,7 @@ print(f"Zapisano: {OUTPUT_DIR}/encoders.pkl  (klucze: {list(encoders.keys())})")
 # Używamy oryginalnych nazw miast (przed encodingiem) z df2
 df_city = df2[["miasto", TARGET]].copy()
 df_city = df_city.dropna(subset=[TARGET])
-q01c = df_city[TARGET].quantile(0.01)
-q95c = df_city[TARGET].quantile(0.95)
-df_city = df_city[(df_city[TARGET] >= q01c) & (df_city[TARGET] <= q95c)]
+df_city = filter_by_percentile(df_city, TARGET, lower=0.01, upper=0.95)
 
 city_stats = (
     df_city.groupby("miasto")[TARGET]
@@ -278,71 +263,36 @@ print(f"\nTreningowy: {len(X_train):,} próbek | Testowy: {len(X_test):,} próbe
 # ─────────────────────────────────────────────
 # 5. TRENOWANIE MODELI
 # ─────────────────────────────────────────────
-print("\n" + "=" * 60)
-print("5. TRENOWANIE MODELI")
-print("=" * 60)
+print_section_header(5, "TRENOWANIE MODELI")
 
 results = {}
 
 # ── 5a. Regresja liniowa ──
-print("\nTrenuję: Regresja liniowa...")
-lr = LinearRegression()
-lr.fit(X_train, y_train)
-y_pred_lr = lr.predict(X_test)
-results["Regresja liniowa"] = {
-    "MAE":   mean_absolute_error(y_test, y_pred_lr),
-    "RMSE":  np.sqrt(mean_squared_error(y_test, y_pred_lr)),
-    "R2":    r2_score(y_test, y_pred_lr),
-    "model": lr,
-    "preds": y_pred_lr,
-}
-print(f"  MAE={results['Regresja liniowa']['MAE']:,.0f}  "
-      f"RMSE={results['Regresja liniowa']['RMSE']:,.0f}  "
-      f"R²={results['Regresja liniowa']['R2']:.4f}")
+results["Regresja liniowa"] = train_and_evaluate(
+    LinearRegression(), "Regresja liniowa", X_train, y_train, X_test, y_test
+)
 
 # ── 5b. Random Forest ──
-print("Trenuję: Random Forest (może chwilę potrwać)...")
-rf = RandomForestRegressor(n_estimators=400, random_state=42, n_jobs=-1)
-rf.fit(X_train, y_train)
-y_pred_rf = rf.predict(X_test)
-results["Random Forest"] = {
-    "MAE":   mean_absolute_error(y_test, y_pred_rf),
-    "RMSE":  np.sqrt(mean_squared_error(y_test, y_pred_rf)),
-    "R2":    r2_score(y_test, y_pred_rf),
-    "model": rf,
-    "preds": y_pred_rf,
-}
-print(f"  MAE={results['Random Forest']['MAE']:,.0f}  "
-      f"RMSE={results['Random Forest']['RMSE']:,.0f}  "
-      f"R²={results['Random Forest']['R2']:.4f}")
+results["Random Forest"] = train_and_evaluate(
+    RandomForestRegressor(n_estimators=400, random_state=42, n_jobs=-1),
+    "Random Forest", X_train, y_train, X_test, y_test
+)
 
 # ── 5c. XGBoost ──
 if XGBOOST_AVAILABLE:
-    print("Trenuję: XGBoost...")
-    xgb = XGBRegressor(
-        n_estimators=600, learning_rate=0.05, max_depth=7,
-        subsample=0.8, colsample_bytree=0.8,
-        random_state=42, n_jobs=-1, verbosity=0,
+    results["XGBoost"] = train_and_evaluate(
+        XGBRegressor(
+            n_estimators=600, learning_rate=0.05, max_depth=7,
+            subsample=0.8, colsample_bytree=0.8,
+            random_state=42, n_jobs=-1, verbosity=0,
+        ),
+        "XGBoost", X_train, y_train, X_test, y_test
     )
-    xgb.fit(X_train, y_train)
-    y_pred_xgb = xgb.predict(X_test)
-    results["XGBoost"] = {
-        "MAE":   mean_absolute_error(y_test, y_pred_xgb),
-        "RMSE":  np.sqrt(mean_squared_error(y_test, y_pred_xgb)),
-        "R2":    r2_score(y_test, y_pred_xgb),
-        "model": xgb,
-        "preds": y_pred_xgb,
-    }
-    print(f"  MAE={results['XGBoost']['MAE']:,.0f}  "
-          f"RMSE={results['XGBoost']['RMSE']:,.0f}  "
-          f"R²={results['XGBoost']['R2']:.4f}")
 
 # ─────────────────────────────────────────────
 # 6. PORÓWNANIE MODELI
 # ─────────────────────────────────────────────
-print("\n" + "=" * 60)
-print("6. PORÓWNANIE MODELI")
-print("=" * 60)
+print_section_header(6, "PORÓWNANIE MODELI")
 
 summary = pd.DataFrame(
     {name: {"MAE": v["MAE"], "RMSE": v["RMSE"], "R²": v["R2"]}
@@ -373,10 +323,7 @@ for i, ((label, key), color) in enumerate(zip(metric_keys, colors)):
             ha="center", va="bottom", fontsize=9,
         )
 plt.suptitle("Porównanie modeli predykcyjnych")
-plt.tight_layout()
-plt.savefig(f"{OUTPUT_DIR}/porownanie_modeli.png", dpi=150)
-plt.close()
-print(f"Zapisano: {OUTPUT_DIR}/porownanie_modeli.png")
+save_plot(OUTPUT_DIR, "porownanie_modeli.png")
 
 # Wykres: wartości rzeczywiste vs przewidywane
 fig, ax = plt.subplots(figsize=(7, 7))
@@ -387,21 +334,16 @@ ax.set_xlabel("Cena rzeczywista [PLN]")
 ax.set_ylabel("Cena przewidywana [PLN]")
 ax.set_title(f"Rzeczywiste vs Przewidywane – {best_name}")
 ax.legend()
-plt.tight_layout()
-plt.savefig(f"{OUTPUT_DIR}/predykcja_vs_rzeczywiste.png", dpi=150)
-plt.close()
-print(f"Zapisano: {OUTPUT_DIR}/predykcja_vs_rzeczywiste.png")
+save_plot(OUTPUT_DIR, "predykcja_vs_rzeczywiste.png")
 
 # Ważność cech – Random Forest
+rf = results["Random Forest"]["model"]
 rf_importances = pd.Series(rf.feature_importances_, index=FEATURES).sort_values(ascending=True)
 fig, ax = plt.subplots(figsize=(9, 6))
 rf_importances.plot(kind="barh", ax=ax, color="#7E57C2")
 ax.set_title("Ważność cech – Random Forest")
 ax.set_xlabel("Ważność")
-plt.tight_layout()
-plt.savefig(f"{OUTPUT_DIR}/waznosc_cech.png", dpi=150)
-plt.close()
-print(f"Zapisano: {OUTPUT_DIR}/waznosc_cech.png")
+save_plot(OUTPUT_DIR, "waznosc_cech.png")
 
 # Zapisz feature importance jako CSV (wymagane przez app)
 fi_df = pd.DataFrame({
@@ -414,9 +356,7 @@ print(f"Zapisano: {OUTPUT_DIR}/feature_importance.csv")
 # ─────────────────────────────────────────────
 # 7. ZAPIS MODELU I METRYK
 # ─────────────────────────────────────────────
-print("\n" + "=" * 60)
-print("7. ZAPIS WYTRENOWANEGO MODELU I METRYK")
-print("=" * 60)
+print_section_header(7, "ZAPIS WYTRENOWANEGO MODELU I METRYK")
 
 best_model = results[best_name]["model"]
 joblib.dump(best_model, f"{OUTPUT_DIR}/model_najlepszy.pkl")
